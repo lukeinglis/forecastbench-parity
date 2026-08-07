@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,8 @@ from forecastbench_parity.constants import (
     LEADERBOARD_NAMES,
     RAW_BASE,
 )
+
+_logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path(".cache")
 
@@ -195,8 +198,9 @@ def fetch_all_question_sets() -> list[QuestionSet]:
         try:
             qs = fetch_question_set(f)
             result.append(qs)
-        except Exception:
-            pass
+        except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError) as e:
+            _logger.warning("Failed to fetch %s: %s", f, e)
+            continue
     return result
 
 
@@ -209,8 +213,9 @@ def fetch_all_resolutions() -> dict[str, Resolution]:
             res_list = fetch_resolution(f)
             for r in res_list:
                 resolutions[r.id] = r
-        except Exception:
-            pass
+        except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError) as e:
+            _logger.warning("Failed to fetch %s: %s", f, e)
+            continue
     return resolutions
 
 

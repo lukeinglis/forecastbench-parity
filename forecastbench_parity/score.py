@@ -176,7 +176,7 @@ def _estimate_difficulty_effects_ols(
         return {}
 
     question_scores: dict[str, list[float]] = {qid: [] for qid in question_ids}
-    for forecaster_id, fcast_map in all_forecasts.items():
+    for fcast_map in all_forecasts.values():
         for qid in question_ids:
             if qid in fcast_map and qid in outcomes:
                 bs = (fcast_map[qid] - outcomes[qid]) ** 2
@@ -274,24 +274,31 @@ def adjust_for_difficulty(
             effect = all_effects.get(qid, 0.0)
             unscaled[fid][qid] = bs - effect
 
-    constant_half_scores: list[float] = []
+    dataset_qid_set = set(dataset_qids)
+    market_qid_set = set(market_qids)
+
+    dataset_half: list[float] = []
+    market_half: list[float] = []
     for q in resolved:
         bs_half = (0.5 - q.outcome) ** 2
         effect = all_effects.get(q.id, 0.0)
-        constant_half_scores.append(bs_half - effect)
+        val = bs_half - effect
+        if q.id in dataset_qid_set:
+            dataset_half.append(val)
+        elif q.id in market_qid_set:
+            market_half.append(val)
 
-    if constant_half_scores:
-        mean_half_unscaled = sum(constant_half_scores) / len(constant_half_scores)
-    else:
-        mean_half_unscaled = 0.0
-
-    shift = 0.25 - mean_half_unscaled
+    dataset_shift = (0.25 - sum(dataset_half) / len(dataset_half)) if dataset_half else 0.0
+    market_shift = (0.25 - sum(market_half) / len(market_half)) if market_half else 0.0
 
     adjusted: dict[str, dict[str, float]] = {}
     for fid, scores in unscaled.items():
         adjusted[fid] = {}
         for qid, val in scores.items():
-            adjusted[fid][qid] = max(0.0, min(1.0, val + shift))
+            if qid in dataset_qid_set:
+                adjusted[fid][qid] = val + dataset_shift
+            else:
+                adjusted[fid][qid] = val + market_shift
 
     return AdjustmentResult(adjusted_scores=adjusted, question_effects=all_effects)
 
@@ -373,9 +380,12 @@ def score_forecasts(
     ds_index = brier_index(ds_brier) if n_dataset > 0 else 0.0
     mk_index = brier_index(mk_brier) if n_market > 0 else 0.0
 
-    total_questions = n_dataset + n_market
-    if total_questions > 0:
-        overall_bs = (ds_brier * n_dataset + mk_brier * n_market) / total_questions
+    if n_dataset > 0 and n_market > 0:
+        overall_bs = (ds_brier + mk_brier) / 2.0
+    elif n_dataset > 0:
+        overall_bs = ds_brier
+    elif n_market > 0:
+        overall_bs = mk_brier
     else:
         overall_bs = 0.0
 
