@@ -1,5 +1,7 @@
 # forecastbench-parity
 
+> **Warning:** Versions prior to v0.1.2 (including v0.1.1) produce incorrect scores due to three bugs: count-weighted overall pooling instead of equal-weight, clamped difficulty adjustments, and a single global calibration shift instead of per-column shifts. Upgrade to v0.1.2+ for correct results.
+
 Frozen competition contract for [ForecastBench](https://www.forecastbench.org/): scoring, submission format, and question handling.
 
 This package contains the immutable parts of the ForecastBench competition interface -- the code that MUST match the official specification regardless of forecasting methodology. It is extracted from the backtester to enforce a clean boundary between "what the competition requires" (this package) and "how we forecast" (the backtester).
@@ -18,7 +20,7 @@ Prompts, temperature, thinking mode, parsing, RAG, ensemble, calibration, model 
 ## Install
 
 ```bash
-pip install forecastbench-parity@git+https://github.com/lukeinglis/forecastbench-parity.git@v0.1.0
+pip install forecastbench-parity@git+https://github.com/lukeinglis/forecastbench-parity.git@v0.1.2
 ```
 
 ## Usage
