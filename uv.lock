@@ -263,8 +263,8 @@ wheels = [
 
 [[package]]
 name = "forecastbench-parity"
-version = "0.1.2"
-source = { editable = "." }
+version = "0.1.0"
+source = { virtual = "." }
 dependencies = [
     { name = "pydantic" },
     { name = "requests" },
