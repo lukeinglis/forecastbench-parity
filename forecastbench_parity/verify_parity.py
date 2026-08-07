@@ -52,7 +52,7 @@ def verify_brier_index_formula() -> list[str]:
 
 def verify_scoring() -> list[str]:
     """Verify scoring produces correct results for known test cases."""
-    from forecastbench_parity.score import brier_score, mean_brier_score, brier_index
+    from forecastbench_parity.score import brier_index, brier_score, mean_brier_score
 
     errors: list[str] = []
 
@@ -91,8 +91,8 @@ def verify_scoring() -> list[str]:
 
 def verify_missing_forecast_default() -> list[str]:
     """Verify score_forecasts defaults missing forecasts to 0.5."""
-    from forecastbench_parity.score import score_forecasts
     from forecastbench_parity.questions import ResolvedQuestion
+    from forecastbench_parity.score import score_forecasts
 
     errors: list[str] = []
 
