@@ -162,21 +162,98 @@ class TestResolvedFieldFiltering:
 
     def test_resolved_false_excluded(self) -> None:
         qs = self._make_qs()
-        resolutions = {"q1": Resolution(id="q1", outcome=1, resolved=False)}
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [Resolution(id="q1", outcome=1, resolved=False)],
+        }
         result = join_resolved_questions([qs], resolutions)
         assert len(result) == 0
 
     def test_resolved_true_included(self) -> None:
         qs = self._make_qs()
-        resolutions = {"q1": Resolution(id="q1", outcome=1, resolved=True)}
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [Resolution(id="q1", outcome=1, resolved=True)],
+        }
         result = join_resolved_questions([qs], resolutions)
         assert len(result) == 1
 
     def test_resolved_none_included(self) -> None:
         qs = self._make_qs()
-        resolutions = {"q1": Resolution(id="q1", outcome=0, resolved=None)}
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [Resolution(id="q1", outcome=0, resolved=None)],
+        }
         result = join_resolved_questions([qs], resolutions)
         assert len(result) == 1
+
+
+class TestMultiHorizonResolutions:
+    def _make_qs(self, question_id: str = "q1") -> QuestionSet:
+        return QuestionSet(
+            forecast_due_date="2024-06-01",
+            question_set="round_1",
+            questions=[Question(id=question_id, source="acled", question="Will X?")],
+        )
+
+    def test_multi_horizon_produces_multiple_resolved_questions(self) -> None:
+        qs = self._make_qs()
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [
+                Resolution(id="q1", outcome=1, resolution_date="2024-07-01", resolved=True),
+                Resolution(id="q1", outcome=0, resolution_date="2024-08-01", resolved=True),
+                Resolution(id="q1", outcome=1, resolution_date="2024-09-01", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 3
+        dates = [r.resolution_date for r in result]
+        assert dates == ["2024-07-01", "2024-08-01", "2024-09-01"]
+        assert [r.outcome for r in result] == [1, 0, 1]
+
+    def test_single_horizon_produces_one_resolved_question(self) -> None:
+        qs = self._make_qs()
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [Resolution(id="q1", outcome=0, resolution_date="N/A", resolved=True)],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 1
+        assert result[0].outcome == 0
+
+    def test_resolved_false_excluded_in_multi_horizon(self) -> None:
+        qs = self._make_qs()
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [
+                Resolution(id="q1", outcome=1, resolution_date="2024-07-01", resolved=True),
+                Resolution(id="q1", outcome=0, resolution_date="2024-08-01", resolved=False),
+                Resolution(id="q1", outcome=1, resolution_date="2024-09-01", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 2
+        dates = [r.resolution_date for r in result]
+        assert "2024-08-01" not in dates
+
+    def test_outcome_none_excluded_in_multi_horizon(self) -> None:
+        qs = self._make_qs()
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [
+                Resolution(id="q1", outcome=1, resolution_date="2024-07-01", resolved=True),
+                Resolution(id="q1", outcome=None, resolution_date="2024-08-01", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 1
+        assert result[0].resolution_date == "2024-07-01"
+
+    def test_empty_resolution_list_produces_nothing(self) -> None:
+        qs = self._make_qs()
+        resolutions: dict[str, list[Resolution]] = {"q1": []}
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 0
+
+    def test_missing_question_id_produces_nothing(self) -> None:
+        qs = self._make_qs()
+        resolutions: dict[str, list[Resolution]] = {}
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 0
 
 
 class TestRefreshCache:

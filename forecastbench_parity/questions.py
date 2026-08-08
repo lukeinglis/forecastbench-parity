@@ -200,15 +200,20 @@ def fetch_all_question_sets() -> list[QuestionSet]:
     return result
 
 
-def fetch_all_resolutions() -> dict[str, Resolution]:
-    """Fetch all resolutions, returning a dict keyed by question id."""
+def fetch_all_resolutions() -> dict[str, list[Resolution]]:
+    """Fetch all resolutions, returning a dict keyed by question id.
+
+    Each question id maps to a list of Resolution entries so that
+    multi-horizon questions (which appear once per resolution_date)
+    are all preserved.
+    """
     filenames = list_resolution_files()
-    resolutions: dict[str, Resolution] = {}
+    resolutions: dict[str, list[Resolution]] = {}
     for f in filenames:
         try:
             res_list = fetch_resolution(f)
             for r in res_list:
-                resolutions[r.id] = r
+                resolutions.setdefault(r.id, []).append(r)
         except Exception:
             pass
     return resolutions
@@ -216,18 +221,21 @@ def fetch_all_resolutions() -> dict[str, Resolution]:
 
 def join_resolved_questions(
     question_sets: list[QuestionSet],
-    resolutions: dict[str, Resolution],
+    resolutions: dict[str, list[Resolution]],
 ) -> list[ResolvedQuestion]:
-    """Join questions with their resolutions, returning only resolved questions."""
+    """Join questions with their resolutions, returning only resolved questions.
+
+    Each question is expanded across all of its Resolution entries so that
+    multi-horizon questions produce one ResolvedQuestion per resolution_date.
+    """
     resolved = []
     for qs in question_sets:
         for q in qs.questions:
-            if (
-                q.id in resolutions
-                and resolutions[q.id].outcome is not None
-                and getattr(resolutions[q.id], "resolved", None) is not False
-            ):
-                r = resolutions[q.id]
+            for r in resolutions.get(q.id, []):
+                if r.outcome is None:
+                    continue
+                if getattr(r, "resolved", None) is False:
+                    continue
                 resolved.append(
                     ResolvedQuestion(
                         id=q.id,
@@ -245,7 +253,7 @@ def join_resolved_questions(
                         market_info_open_datetime=q.market_info_open_datetime,
                         market_info_close_datetime=q.market_info_close_datetime,
                         market_info_resolution_criteria=q.market_info_resolution_criteria,
-                        outcome=r.outcome,  # type: ignore[arg-type]
+                        outcome=r.outcome,
                         resolution_date=r.resolution_date,
                         forecast_due_date=qs.forecast_due_date,
                         question_set=qs.question_set,
