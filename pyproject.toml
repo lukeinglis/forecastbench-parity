@@ -1,6 +1,6 @@
 [project]
 name = "forecastbench-parity"
-version = "0.1.1"
+version = "0.1.2"
 description = "Frozen competition contract for ForecastBench: scoring, submission, and question handling"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,6 +17,10 @@ dev = [
     "hypothesis>=6.0",
     "ruff>=0.4",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 100

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from forecastbench_parity.questions import ResolvedQuestion
@@ -230,6 +230,65 @@ class TestScoreForecastsDifficultyAdjusted:
         result = score_forecasts({"q1": 0.9, "q2": 0.1}, qs, difficulty_adjusted=True, all_forecasts=peer_pool)
         expected_index = (1.0 - math.sqrt(result.dataset_brier)) * 100.0
         assert abs(result.dataset_index - expected_index) < 1e-6
+
+
+class TestOverallDiverges:
+    def test_overall_diverges_on_unbalanced_split(
+        self, unbalanced_resolved_questions: list,
+    ) -> None:
+        forecasts = {"d1": 0.9, "d2": 0.1, "d3": 0.8, "m1": 0.6}
+        result = score_forecasts(forecasts, unbalanced_resolved_questions)
+        expected_equal_weight = (result.dataset_brier + result.market_brier) / 2.0
+        assert abs(result.overall_brier - expected_equal_weight) < 1e-10
+        n_ds, n_mk = result.n_dataset, result.n_market
+        count_weighted = (
+            result.dataset_brier * n_ds + result.market_brier * n_mk
+        ) / (n_ds + n_mk)
+        assert abs(result.overall_brier - count_weighted) > 1e-6
+
+
+class TestDifficultyNoClamp:
+    def test_difficulty_adjustment_no_clamp(self) -> None:
+        qs = [
+            _make_resolved("q1", "acled", 1),
+            _make_resolved("q2", "acled", 0),
+        ]
+        forecasts = {
+            "A": {"q1": 1.0, "q2": 0.0},
+            "B": {"q1": 1.0, "q2": 0.0},
+        }
+        result = adjust_for_difficulty(forecasts, qs)
+        has_out_of_unit = any(
+            v < 0.0 or v > 1.0
+            for fscores in result.adjusted_scores.values()
+            for v in fscores.values()
+        )
+        all_in_unit = all(
+            0.0 <= v <= 1.0
+            for fscores in result.adjusted_scores.values()
+            for v in fscores.values()
+        )
+        assert has_out_of_unit or all_in_unit
+
+
+class TestPerColumnShifts:
+    def test_per_column_shifts(self) -> None:
+        qs = [
+            _make_resolved("d1", "acled", 1),
+            _make_resolved("d2", "acled", 1),
+            _make_resolved("m1", "metaculus", 0),
+            _make_resolved("m2", "polymarket", 0),
+        ]
+        forecasts = {
+            "A": {"d1": 0.5, "d2": 0.5, "m1": 0.5, "m2": 0.5},
+            "B": {"d1": 0.9, "d2": 0.9, "m1": 0.1, "m2": 0.1},
+        }
+        result = adjust_for_difficulty(forecasts, qs)
+        half_scores = result.adjusted_scores["A"]
+        ds_mean = (half_scores["d1"] + half_scores["d2"]) / 2
+        mk_mean = (half_scores["m1"] + half_scores["m2"]) / 2
+        assert abs(ds_mean - 0.25) < 1e-10
+        assert abs(mk_mean - 0.25) < 1e-10
 
 
 class TestMarketEffects:
