@@ -232,6 +232,12 @@ def join_resolved_questions(
     for qs in question_sets:
         for q in qs.questions:
             for r in resolutions.get(q.id, []):
+                if (
+                    isinstance(q.resolution_dates, list)
+                    and r.resolution_date is not None
+                    and r.resolution_date not in q.resolution_dates
+                ):
+                    continue
                 if r.outcome is None:
                     continue
                 if getattr(r, "resolved", None) is False:

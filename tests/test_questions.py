@@ -256,6 +256,83 @@ class TestMultiHorizonResolutions:
         assert len(result) == 0
 
 
+class TestMultiHorizonResolutionDateFilter:
+    """Tests for resolution_date filtering in join_resolved_questions (upstream parity)."""
+
+    def test_multi_horizon_filters_by_resolution_dates(self) -> None:
+        qs = QuestionSet(
+            forecast_due_date="2024-06-01",
+            question_set="round_1",
+            questions=[Question(
+                id="q1", source="acled", question="Will X?",
+                resolution_dates=["2024-07-28", "2024-08-20"],
+            )],
+        )
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [
+                Resolution(id="q1", outcome=1, resolution_date="2024-07-28", resolved=True),
+                Resolution(id="q1", outcome=0, resolution_date="2024-08-20", resolved=True),
+                Resolution(id="q1", outcome=1, resolution_date="2024-09-01", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 2
+        dates = {r.resolution_date for r in result}
+        assert dates == {"2024-07-28", "2024-08-20"}
+        assert "2024-09-01" not in dates
+
+    def test_single_horizon_na_matches_all_resolutions(self) -> None:
+        qs = QuestionSet(
+            forecast_due_date="2024-06-01",
+            question_set="round_1",
+            questions=[Question(
+                id="q1", source="acled", question="Will X?",
+                resolution_dates="N/A",
+            )],
+        )
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [
+                Resolution(id="q1", outcome=1, resolution_date="2024-07-28", resolved=True),
+                Resolution(id="q1", outcome=0, resolution_date="2024-08-20", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 2
+
+    def test_none_resolution_dates_matches_all(self) -> None:
+        qs = QuestionSet(
+            forecast_due_date="2024-06-01",
+            question_set="round_1",
+            questions=[Question(id="q1", source="acled", question="Will X?")],
+        )
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [
+                Resolution(id="q1", outcome=1, resolution_date="2024-07-28", resolved=True),
+                Resolution(id="q1", outcome=0, resolution_date="2024-08-20", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 2
+
+    def test_resolution_with_none_date_passes_filter(self) -> None:
+        qs = QuestionSet(
+            forecast_due_date="2024-06-01",
+            question_set="round_1",
+            questions=[Question(
+                id="q1", source="acled", question="Will X?",
+                resolution_dates=["2024-07-28"],
+            )],
+        )
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [
+                Resolution(id="q1", outcome=1, resolution_date=None, resolved=True),
+                Resolution(id="q1", outcome=0, resolution_date="2024-07-28", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 2
+
+
 class TestRefreshCache:
     def test_deletes_listings_and_resolutions(self, tmp_path: Path) -> None:
         (tmp_path / "question_sets_listing.json").write_text("{}")

@@ -161,6 +161,13 @@ def murphy_decomposition(
     }
 
 
+def _scoring_key(q: ResolvedQuestion) -> str:
+    """Per-horizon scoring key mirroring upstream's (question_id, resolution_date) entity."""
+    if q.resolution_date and q.resolution_date != "N/A":
+        return f"{q.id}_{q.resolution_date}"
+    return q.id
+
+
 def _is_market_question(q: ResolvedQuestion) -> bool:
     source_lower = q.source.lower()
     return any(s in source_lower for s in MARKET_SOURCES)
@@ -247,9 +254,9 @@ def adjust_for_difficulty(
     if not all_forecasts or not resolved:
         return AdjustmentResult(adjusted_scores={}, question_effects={})
 
-    outcomes = {q.id: q.outcome for q in resolved}
-    dataset_qids = [q.id for q in resolved if not _is_market_question(q)]
-    market_qids = [q.id for q in resolved if _is_market_question(q)]
+    outcomes = {_scoring_key(q): q.outcome for q in resolved}
+    dataset_qids = [_scoring_key(q) for q in resolved if not _is_market_question(q)]
+    market_qids = [_scoring_key(q) for q in resolved if _is_market_question(q)]
 
     dataset_effects = _estimate_difficulty_effects_ols(
         all_forecasts, outcomes, dataset_qids,
@@ -277,7 +284,7 @@ def adjust_for_difficulty(
     constant_half_scores: list[float] = []
     for q in resolved:
         bs_half = (0.5 - q.outcome) ** 2
-        effect = all_effects.get(q.id, 0.0)
+        effect = all_effects.get(_scoring_key(q), 0.0)
         constant_half_scores.append(bs_half - effect)
 
     if constant_half_scores:
@@ -312,13 +319,18 @@ def score_forecasts(
     if not resolved:
         raise ValueError("No resolved questions to score")
 
+    seen_keys: set[str] = set()
     n_missing = 0
     complete_forecasts: dict[str, float] = {}
     for q in resolved:
+        sk = _scoring_key(q)
+        if sk in seen_keys:
+            continue
+        seen_keys.add(sk)
         if q.id in forecasts:
-            complete_forecasts[q.id] = forecasts[q.id]
+            complete_forecasts[sk] = forecasts[q.id]
         else:
-            complete_forecasts[q.id] = 0.5
+            complete_forecasts[sk] = 0.5
             n_missing += 1
 
     for f in complete_forecasts.values():
@@ -329,13 +341,29 @@ def score_forecasts(
     question_effects: dict[str, float] = {}
 
     if difficulty_adjusted and all_forecasts and len(all_forecasts) > 1:
+        scoring_key_to_base_id = {_scoring_key(q): q.id for q in resolved}
+        remapped_pool: dict[str, dict[str, float]] = {}
+        for fid, fcast_map in all_forecasts.items():
+            remapped: dict[str, float] = {}
+            for sk, base_id in scoring_key_to_base_id.items():
+                if base_id in fcast_map:
+                    remapped[sk] = fcast_map[base_id]
+            remapped_pool[fid] = remapped
+
+        remapped_market: dict[str, float] | None = None
+        if market_forecasts:
+            remapped_market = {}
+            for sk, base_id in scoring_key_to_base_id.items():
+                if base_id in market_forecasts:
+                    remapped_market[sk] = market_forecasts[base_id]
+
         forecaster_id = f"_target_{uuid4().hex}"
-        pool = dict(all_forecasts)
+        pool = dict(remapped_pool)
         pool[forecaster_id] = complete_forecasts
         adj_result = adjust_for_difficulty(
             pool, resolved,
             market_weight=market_weight,
-            market_forecasts=market_forecasts,
+            market_forecasts=remapped_market,
         )
         target_adjusted = adj_result.adjusted_scores.get(forecaster_id, {})
         question_effects = adj_result.question_effects
@@ -343,9 +371,10 @@ def score_forecasts(
         dataset_scores: list[float] = []
         market_scores: list[float] = []
         for q in resolved:
-            adj = target_adjusted.get(q.id)
+            sk = _scoring_key(q)
+            adj = target_adjusted.get(sk)
             if adj is None:
-                adj = brier_score(complete_forecasts[q.id], q.outcome)
+                adj = brier_score(complete_forecasts.get(sk, 0.5), q.outcome)
             if _is_market_question(q):
                 market_scores.append(adj)
             else:
@@ -358,7 +387,8 @@ def score_forecasts(
         market_pairs: list[tuple[float, int]] = []
 
         for q in resolved:
-            f = complete_forecasts[q.id]
+            sk = _scoring_key(q)
+            f = complete_forecasts.get(sk, 0.5)
             if _is_market_question(q):
                 market_pairs.append((f, q.outcome))
             else:
