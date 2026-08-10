@@ -12,6 +12,7 @@ from forecastbench_parity.questions import ResolvedQuestion
 from forecastbench_parity.score import (
     _build_market_effects,
     _estimate_difficulty_effects_ols,
+    _scoring_key,
     adjust_for_difficulty,
     brier_index,
     brier_score,
@@ -299,3 +300,113 @@ class TestMarketEffects:
         effects = _build_market_effects(forecasts, outcomes, ["m1", "m2", "m3"], market_weight=1.0, market_forecasts=market_forecasts)
         assert len(effects) == 3
         assert abs(sum(effects.values())) < 1e-10
+
+
+def _make_resolved_horizon(
+    qid: str, source: str, outcome: int, resolution_date: str,
+    due: str = "2024-01-01",
+) -> ResolvedQuestion:
+    return ResolvedQuestion(
+        id=qid, source=source, question=f"Q {qid}",
+        outcome=outcome, resolution_date=resolution_date,
+        forecast_due_date=due,
+    )
+
+
+class TestScoringKey:
+    def test_with_resolution_date(self) -> None:
+        q = _make_resolved_horizon("q1", "acled", 1, "2024-07-28")
+        assert _scoring_key(q) == "q1_2024-07-28"
+
+    def test_with_na_resolution_date(self) -> None:
+        q = _make_resolved("q1", "acled", 1)
+        q2 = ResolvedQuestion(
+            id="q1", source="acled", question="Q", outcome=1,
+            resolution_date="N/A", forecast_due_date="2024-01-01",
+        )
+        assert _scoring_key(q) == "q1"
+        assert _scoring_key(q2) == "q1"
+
+    def test_with_none_resolution_date(self) -> None:
+        q = _make_resolved("q1", "acled", 1)
+        assert q.resolution_date is None
+        assert _scoring_key(q) == "q1"
+
+
+class TestMultiHorizonScoring:
+    def test_each_horizon_gets_own_brier_score(self) -> None:
+        resolved = [
+            _make_resolved_horizon("q1", "acled", 1, "2024-07-28"),
+            _make_resolved_horizon("q1", "acled", 0, "2024-08-20"),
+        ]
+        forecasts = {"q1": 0.9}
+        result = score_forecasts(forecasts, resolved, difficulty_adjusted=False)
+        bs_h1 = (0.9 - 1) ** 2  # 0.01
+        bs_h2 = (0.9 - 0) ** 2  # 0.81
+        expected_mean = (bs_h1 + bs_h2) / 2.0
+        assert result.n_dataset == 2
+        assert abs(result.dataset_brier - expected_mean) < 1e-10
+
+    def test_missing_forecast_counted_per_horizon(self) -> None:
+        resolved = [
+            _make_resolved_horizon("q1", "acled", 1, "2024-07-28"),
+            _make_resolved_horizon("q1", "acled", 0, "2024-08-20"),
+            _make_resolved_horizon("q2", "acled", 1, "2024-07-28"),
+        ]
+        forecasts = {"q1": 0.8}
+        result = score_forecasts(forecasts, resolved, difficulty_adjusted=False)
+        assert result.n_missing == 1  # q2 missing, q1 covers both horizons
+
+    def test_single_horizon_backward_compatible(self) -> None:
+        resolved = [_make_resolved("q1", "acled", 1), _make_resolved("q2", "acled", 0)]
+        forecasts = {"q1": 0.9, "q2": 0.1}
+        result = score_forecasts(forecasts, resolved, difficulty_adjusted=False)
+        expected = ((0.9 - 1) ** 2 + (0.1 - 0) ** 2) / 2.0
+        assert abs(result.dataset_brier - expected) < 1e-10
+        assert result.n_missing == 0
+
+
+class TestMultiHorizonDifficultyAdjustment:
+    def test_different_outcomes_per_horizon_produce_different_effects(self) -> None:
+        resolved = [
+            _make_resolved_horizon("q1", "acled", 1, "2024-07-28"),
+            _make_resolved_horizon("q1", "acled", 0, "2024-08-20"),
+        ]
+        peer_pool = {
+            "peer1": {"q1": 0.9},
+            "peer2": {"q1": 0.3},
+        }
+        scoring_key_to_base = {_scoring_key(q): q.id for q in resolved}
+        remapped_pool: dict[str, dict[str, float]] = {}
+        for fid, fcast_map in peer_pool.items():
+            remapped: dict[str, float] = {}
+            for sk, base_id in scoring_key_to_base.items():
+                if base_id in fcast_map:
+                    remapped[sk] = fcast_map[base_id]
+            remapped_pool[fid] = remapped
+
+        result = adjust_for_difficulty(remapped_pool, resolved)
+        effects = result.question_effects
+        assert "q1_2024-07-28" in effects
+        assert "q1_2024-08-20" in effects
+        assert effects["q1_2024-07-28"] != effects["q1_2024-08-20"]
+
+    def test_adjusted_scoring_with_multi_horizon(self) -> None:
+        resolved = [
+            _make_resolved_horizon("q1", "acled", 1, "2024-07-28"),
+            _make_resolved_horizon("q1", "acled", 0, "2024-08-20"),
+            _make_resolved_horizon("q2", "acled", 1, "2024-07-28"),
+        ]
+        peer_pool = {
+            "peer1": {"q1": 0.8, "q2": 0.7},
+            "peer2": {"q1": 0.4, "q2": 0.5},
+        }
+        forecasts = {"q1": 0.5, "q2": 0.5}
+        result = score_forecasts(
+            forecasts, resolved,
+            difficulty_adjusted=True,
+            all_forecasts=peer_pool,
+        )
+        assert result.difficulty_adjusted
+        assert result.n_dataset == 3
+        assert result.n_missing == 0
