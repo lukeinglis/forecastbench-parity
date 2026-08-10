@@ -1,6 +1,6 @@
 [project]
 name = "forecastbench-parity"
-version = "0.1.2"
+version = "0.2.0"
 description = "Frozen competition contract for ForecastBench: scoring, submission, and question handling"
 requires-python = ">=3.11"
 dependencies = [
