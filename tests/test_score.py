@@ -389,6 +389,42 @@ class TestMultiHorizonScoring:
         assert result.n_missing == 0
 
 
+class TestNCountDeduplication:
+    """N counts should reflect deduplicated scoring keys, not raw list length."""
+
+    def test_duplicate_scoring_keys_not_double_counted(self) -> None:
+        resolved = [
+            _make_resolved_horizon("q1", "acled", 1, "2024-07-28"),
+            _make_resolved_horizon("q1", "acled", 1, "2024-07-28"),
+            _make_resolved_horizon("q2", "acled", 0, "2024-08-20"),
+        ]
+        forecasts = {"q1": 0.9, "q2": 0.1}
+        result = score_forecasts(forecasts, resolved, difficulty_adjusted=False)
+        assert result.n_dataset == 2
+        assert result.n_market == 0
+
+    def test_market_duplicate_scoring_keys(self) -> None:
+        resolved = [
+            _make_resolved_horizon("m1", "metaculus", 1, "2024-07-28"),
+            _make_resolved_horizon("m1", "metaculus", 1, "2024-07-28"),
+            _make_resolved_horizon("m2", "polymarket", 0, "2024-08-20"),
+        ]
+        forecasts = {"m1": 0.9, "m2": 0.1}
+        result = score_forecasts(forecasts, resolved, difficulty_adjusted=False)
+        assert result.n_dataset == 0
+        assert result.n_market == 2
+
+    def test_brier_score_uses_deduplicated_entries(self) -> None:
+        resolved = [
+            _make_resolved_horizon("q1", "acled", 1, "2024-07-28"),
+            _make_resolved_horizon("q1", "acled", 1, "2024-07-28"),
+        ]
+        forecasts = {"q1": 0.9}
+        result = score_forecasts(forecasts, resolved, difficulty_adjusted=False)
+        assert result.n_dataset == 1
+        assert abs(result.dataset_brier - (0.9 - 1) ** 2) < 1e-10
+
+
 class TestMultiHorizonDifficultyAdjustment:
     def test_different_outcomes_per_horizon_produce_different_effects(self) -> None:
         resolved = [
