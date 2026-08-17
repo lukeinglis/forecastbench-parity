@@ -314,7 +314,7 @@ class TestMultiHorizonResolutionDateFilter:
         result = join_resolved_questions([qs], resolutions)
         assert len(result) == 2
 
-    def test_resolution_with_none_date_passes_filter(self) -> None:
+    def test_resolution_with_none_date_filtered_for_multi_horizon(self) -> None:
         qs = QuestionSet(
             forecast_due_date="2024-06-01",
             question_set="round_1",
@@ -330,7 +330,54 @@ class TestMultiHorizonResolutionDateFilter:
             ],
         }
         result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 1
+        assert result[0].resolution_date == "2024-07-28"
+
+
+class TestMultiHorizonNullDateRejection:
+    """Tests that null and N/A resolution_dates are rejected for multi-horizon questions."""
+
+    def test_multi_horizon_rejects_null_resolution_date(self) -> None:
+        qs = QuestionSet(
+            forecast_due_date="2024-06-01",
+            question_set="round_1",
+            questions=[Question(
+                id="q1", source="acled", question="Will X?",
+                resolution_dates=["2024-07-28", "2024-08-20"],
+            )],
+        )
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [
+                Resolution(id="q1", outcome=1, resolution_date=None, resolved=True),
+                Resolution(id="q1", outcome=0, resolution_date="2024-07-28", resolved=True),
+                Resolution(id="q1", outcome=1, resolution_date="2024-08-20", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
         assert len(result) == 2
+        dates = {r.resolution_date for r in result}
+        assert dates == {"2024-07-28", "2024-08-20"}
+
+    def test_multi_horizon_rejects_na_resolution_date(self) -> None:
+        qs = QuestionSet(
+            forecast_due_date="2024-06-01",
+            question_set="round_1",
+            questions=[Question(
+                id="q1", source="acled", question="Will X?",
+                resolution_dates=["2024-07-28", "2024-08-20"],
+            )],
+        )
+        resolutions: dict[str, list[Resolution]] = {
+            "q1": [
+                Resolution(id="q1", outcome=1, resolution_date="N/A", resolved=True),
+                Resolution(id="q1", outcome=0, resolution_date="2024-07-28", resolved=True),
+                Resolution(id="q1", outcome=1, resolution_date="2024-08-20", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        assert len(result) == 2
+        dates = {r.resolution_date for r in result}
+        assert dates == {"2024-07-28", "2024-08-20"}
 
 
 class TestRefreshCache:

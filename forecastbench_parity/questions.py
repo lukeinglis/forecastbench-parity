@@ -234,18 +234,27 @@ def join_resolved_questions(
     multi-horizon questions produce one ResolvedQuestion per resolution_date.
     """
     resolved = []
+    total_seen = 0
+    skipped_null_date = 0
+    skipped_invalid_date = 0
+    skipped_no_outcome = 0
+    skipped_unresolved = 0
     for qs in question_sets:
         for q in qs.questions:
             for r in resolutions.get(q.id, []):
-                if (
-                    isinstance(q.resolution_dates, list)
-                    and r.resolution_date is not None
-                    and r.resolution_date not in q.resolution_dates
-                ):
-                    continue
+                total_seen += 1
+                if isinstance(q.resolution_dates, list):
+                    if r.resolution_date is None or r.resolution_date == "N/A":
+                        skipped_null_date += 1
+                        continue
+                    if r.resolution_date not in q.resolution_dates:
+                        skipped_invalid_date += 1
+                        continue
                 if r.outcome is None:
+                    skipped_no_outcome += 1
                     continue
                 if getattr(r, "resolved", None) is False:
+                    skipped_unresolved += 1
                     continue
                 resolved.append(
                     ResolvedQuestion(
@@ -270,6 +279,16 @@ def join_resolved_questions(
                         question_set=qs.question_set,
                     )
                 )
+    _logger.debug(
+        "join_resolved_questions: total_resolutions_seen=%d skipped_null_date=%d "
+        "skipped_invalid_date=%d skipped_no_outcome=%d skipped_unresolved=%d kept_count=%d",
+        total_seen,
+        skipped_null_date,
+        skipped_invalid_date,
+        skipped_no_outcome,
+        skipped_unresolved,
+        len(resolved),
+    )
     return resolved
 
 
