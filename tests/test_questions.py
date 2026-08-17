@@ -18,6 +18,7 @@ from forecastbench_parity.questions import (
     fetch_all_resolutions,
     fetch_question_set,
     fetch_resolution,
+    filter_question_sets_by_age,
     join_resolved_questions,
     refresh_cache,
 )
@@ -475,6 +476,57 @@ class TestHorizonFiltering:
         assert "2024-06-08" in dates
         assert "2024-07-01" in dates
         assert "2024-06-15" not in dates
+
+
+class TestFilterQuestionSetsByAge:
+    """Tests for the 365-day question set date cutoff (upstream parity)."""
+
+    def _make_sets(self, dates: list[str]) -> list[QuestionSet]:
+        return [
+            QuestionSet(
+                forecast_due_date=d,
+                question_set=f"set_{i}",
+                questions=[Question(id=f"q{i}", source="acled", question="Will X?")],
+            )
+            for i, d in enumerate(dates)
+        ]
+
+    def test_filters_recent_question_sets(self) -> None:
+        from datetime import date
+        sets = self._make_sets(["2024-01-01", "2025-06-01", "2026-01-01"])
+        ref = date(2026, 8, 17)
+        result = filter_question_sets_by_age(sets, max_age_days=365, reference_date=ref)
+        dates = [qs.forecast_due_date for qs in result]
+        assert "2024-01-01" in dates
+        assert "2025-06-01" in dates
+        assert "2026-01-01" not in dates
+
+    def test_exact_cutoff_included(self) -> None:
+        from datetime import date
+        sets = self._make_sets(["2025-08-17"])
+        ref = date(2026, 8, 17)
+        result = filter_question_sets_by_age(sets, max_age_days=365, reference_date=ref)
+        assert len(result) == 1
+
+    def test_one_day_after_cutoff_excluded(self) -> None:
+        from datetime import date
+        sets = self._make_sets(["2025-08-18"])
+        ref = date(2026, 8, 17)
+        result = filter_question_sets_by_age(sets, max_age_days=365, reference_date=ref)
+        assert len(result) == 0
+
+    def test_empty_input_returns_empty(self) -> None:
+        result = filter_question_sets_by_age([])
+        assert result == []
+
+    def test_custom_max_age_days(self) -> None:
+        from datetime import date
+        sets = self._make_sets(["2026-08-01", "2026-06-01"])
+        ref = date(2026, 8, 17)
+        result = filter_question_sets_by_age(sets, max_age_days=30, reference_date=ref)
+        dates = [qs.forecast_due_date for qs in result]
+        assert "2026-08-01" not in dates
+        assert "2026-06-01" in dates
 
 
 class TestRefreshCache:

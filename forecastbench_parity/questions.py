@@ -322,6 +322,30 @@ def join_resolved_questions(
     return resolved
 
 
+def filter_question_sets_by_age(
+    question_sets: list[QuestionSet],
+    max_age_days: int = 365,
+    *,
+    reference_date: date | None = None,
+) -> list[QuestionSet]:
+    """Filter question sets to those with forecast_due_date <= reference_date - max_age_days.
+
+    Matches upstream's MODEL_RELEASE_DAYS_CUTOFF filter which only includes
+    question sets old enough for resolution data to have matured.
+    """
+    if reference_date is None:
+        from datetime import UTC, datetime
+        reference_date = datetime.now(tz=UTC).date()
+    ref = reference_date
+    cutoff = (ref - timedelta(days=max_age_days)).isoformat()
+    kept = [qs for qs in question_sets if qs.forecast_due_date and qs.forecast_due_date <= cutoff]
+    _logger.debug(
+        "filter_question_sets_by_age: total=%d kept=%d cutoff=%s",
+        len(question_sets), len(kept), cutoff,
+    )
+    return kept
+
+
 def fetch_leaderboard(name: str = "baseline") -> list[dict[str, str]]:
     """Fetch a leaderboard CSV and return as list of dicts."""
     import csv
