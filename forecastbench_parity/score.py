@@ -162,10 +162,16 @@ def murphy_decomposition(
 
 
 def _scoring_key(q: ResolvedQuestion) -> str:
-    """Per-horizon scoring key mirroring upstream's (question_id, resolution_date) entity."""
+    """Per-round scoring key mirroring upstream's question_pk.
+
+    Dataset (multi-horizon): forecast_due_date + source + id + resolution_date
+    Market (single-horizon): forecast_due_date + source + id
+    """
+    if _is_market_question(q):
+        return f"{q.forecast_due_date}_{q.source}_{q.id}"
     if q.resolution_date and q.resolution_date != "N/A":
-        return f"{q.id}_{q.resolution_date}"
-    return q.id
+        return f"{q.forecast_due_date}_{q.source}_{q.id}_{q.resolution_date}"
+    return f"{q.forecast_due_date}_{q.source}_{q.id}"
 
 
 def _is_market_question(q: ResolvedQuestion) -> bool:

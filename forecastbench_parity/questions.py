@@ -209,18 +209,29 @@ def fetch_all_resolutions() -> dict[str, list[Resolution]]:
 
     Each question id maps to a list of Resolution entries so that
     multi-horizon questions (which appear once per resolution_date)
-    are all preserved.
+    are all preserved.  Duplicate (id, resolution_date) pairs across
+    resolution files are dropped to match upstream's pre-deduplicated
+    resolution data.
     """
     filenames = list_resolution_files()
     resolutions: dict[str, list[Resolution]] = {}
+    seen: set[tuple[str, str | None]] = set()
+    duplicates_dropped = 0
     for f in filenames:
         try:
             res_list = fetch_resolution(f)
             for r in res_list:
+                key = (r.id, r.resolution_date)
+                if key in seen:
+                    duplicates_dropped += 1
+                    continue
+                seen.add(key)
                 resolutions.setdefault(r.id, []).append(r)
         except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError) as e:
             _logger.warning("Failed to fetch %s: %s", f, e)
             continue
+    if duplicates_dropped:
+        _logger.info("fetch_all_resolutions: dropped_duplicate_resolutions=%d", duplicates_dropped)
     return resolutions
 
 

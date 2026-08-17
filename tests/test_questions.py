@@ -15,6 +15,7 @@ from forecastbench_parity.questions import (
     Resolution,
     _cache_path,
     _fetch_json,
+    fetch_all_resolutions,
     fetch_question_set,
     fetch_resolution,
     join_resolved_questions,
@@ -398,3 +399,59 @@ class TestRefreshCache:
     def test_noop_when_cache_dir_missing(self, tmp_path: Path) -> None:
         with patch("forecastbench_parity.questions.CACHE_DIR", tmp_path / "nonexistent"):
             refresh_cache()
+
+
+class TestResolutionDeduplication:
+    """Verify fetch_all_resolutions() deduplicates by (id, resolution_date)."""
+
+    @patch("forecastbench_parity.questions.list_resolution_files")
+    @patch("forecastbench_parity.questions.fetch_resolution")
+    def test_duplicate_entries_across_files_are_dropped(
+        self, mock_fetch_res: MagicMock, mock_list: MagicMock,
+    ) -> None:
+        mock_list.return_value = ["file1.json", "file2.json"]
+        mock_fetch_res.side_effect = [
+            [
+                Resolution(id="q1", outcome=1, resolution_date="2024-07-28"),
+                Resolution(id="q1", outcome=0, resolution_date="2024-08-20"),
+            ],
+            [
+                Resolution(id="q1", outcome=1, resolution_date="2024-07-28"),
+                Resolution(id="q2", outcome=1, resolution_date="2024-07-28"),
+            ],
+        ]
+        result = fetch_all_resolutions()
+        q1_dates = [(r.id, r.resolution_date) for r in result["q1"]]
+        assert len(q1_dates) == 2
+        assert ("q1", "2024-07-28") in q1_dates
+        assert ("q1", "2024-08-20") in q1_dates
+
+    @patch("forecastbench_parity.questions.list_resolution_files")
+    @patch("forecastbench_parity.questions.fetch_resolution")
+    def test_unique_entries_are_preserved(
+        self, mock_fetch_res: MagicMock, mock_list: MagicMock,
+    ) -> None:
+        mock_list.return_value = ["file1.json"]
+        mock_fetch_res.return_value = [
+            Resolution(id="q1", outcome=1, resolution_date="2024-07-28"),
+            Resolution(id="q1", outcome=0, resolution_date="2024-08-20"),
+            Resolution(id="q2", outcome=1, resolution_date="2024-07-28"),
+        ]
+        result = fetch_all_resolutions()
+        assert len(result["q1"]) == 2
+        assert len(result["q2"]) == 1
+
+    @patch("forecastbench_parity.questions.list_resolution_files")
+    @patch("forecastbench_parity.questions.fetch_resolution")
+    def test_result_has_unique_id_date_pairs(
+        self, mock_fetch_res: MagicMock, mock_list: MagicMock,
+    ) -> None:
+        mock_list.return_value = ["a.json", "b.json", "c.json"]
+        shared = [
+            Resolution(id="q1", outcome=1, resolution_date="2024-07-28"),
+            Resolution(id="q1", outcome=0, resolution_date="2024-08-20"),
+        ]
+        mock_fetch_res.side_effect = [shared, shared, shared]
+        result = fetch_all_resolutions()
+        all_pairs = [(r.id, r.resolution_date) for rlist in result.values() for r in rlist]
+        assert len(all_pairs) == len(set(all_pairs))

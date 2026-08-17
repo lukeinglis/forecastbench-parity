@@ -192,10 +192,11 @@ class TestDifficultyEffectsOLS:
 class TestAdjustForDifficulty:
     def test_constant_half_yields_025(self) -> None:
         qs = [_make_resolved("q1", "acled", 1), _make_resolved("q2", "acled", 0), _make_resolved("q3", "acled", 1)]
+        sk = {q.id: _scoring_key(q) for q in qs}
         forecasts = {
-            "half": {"q1": 0.5, "q2": 0.5, "q3": 0.5},
-            "good": {"q1": 0.9, "q2": 0.1, "q3": 0.8},
-            "bad": {"q1": 0.2, "q2": 0.8, "q3": 0.3},
+            "half": {sk["q1"]: 0.5, sk["q2"]: 0.5, sk["q3"]: 0.5},
+            "good": {sk["q1"]: 0.9, sk["q2"]: 0.1, sk["q3"]: 0.8},
+            "bad": {sk["q1"]: 0.2, sk["q2"]: 0.8, sk["q3"]: 0.3},
         }
         result = adjust_for_difficulty(forecasts, qs)
         half_scores = result.adjusted_scores["half"]
@@ -253,9 +254,10 @@ class TestDifficultyNoClamp:
             _make_resolved("q1", "acled", 1),
             _make_resolved("q2", "acled", 0),
         ]
+        sk = {q.id: _scoring_key(q) for q in qs}
         forecasts = {
-            "A": {"q1": 1.0, "q2": 0.0},
-            "B": {"q1": 1.0, "q2": 0.0},
+            "A": {sk["q1"]: 1.0, sk["q2"]: 0.0},
+            "B": {sk["q1"]: 1.0, sk["q2"]: 0.0},
         }
         result = adjust_for_difficulty(forecasts, qs)
         has_out_of_unit = any(
@@ -279,14 +281,18 @@ class TestPerColumnShifts:
             _make_resolved("m1", "metaculus", 0),
             _make_resolved("m2", "polymarket", 0),
         ]
+        sk_d1 = _scoring_key(qs[0])
+        sk_d2 = _scoring_key(qs[1])
+        sk_m1 = _scoring_key(qs[2])
+        sk_m2 = _scoring_key(qs[3])
         forecasts = {
-            "A": {"d1": 0.5, "d2": 0.5, "m1": 0.5, "m2": 0.5},
-            "B": {"d1": 0.9, "d2": 0.9, "m1": 0.1, "m2": 0.1},
+            "A": {sk_d1: 0.5, sk_d2: 0.5, sk_m1: 0.5, sk_m2: 0.5},
+            "B": {sk_d1: 0.9, sk_d2: 0.9, sk_m1: 0.1, sk_m2: 0.1},
         }
         result = adjust_for_difficulty(forecasts, qs)
         half_scores = result.adjusted_scores["A"]
-        ds_mean = (half_scores["d1"] + half_scores["d2"]) / 2
-        mk_mean = (half_scores["m1"] + half_scores["m2"]) / 2
+        ds_mean = (half_scores[sk_d1] + half_scores[sk_d2]) / 2
+        mk_mean = (half_scores[sk_m1] + half_scores[sk_m2]) / 2
         assert abs(ds_mean - 0.25) < 1e-10
         assert abs(mk_mean - 0.25) < 1e-10
 
@@ -314,23 +320,40 @@ def _make_resolved_horizon(
 
 
 class TestScoringKey:
-    def test_with_resolution_date(self) -> None:
+    def test_dataset_with_resolution_date(self) -> None:
         q = _make_resolved_horizon("q1", "acled", 1, "2024-07-28")
-        assert _scoring_key(q) == "q1_2024-07-28"
+        assert _scoring_key(q) == "2024-01-01_acled_q1_2024-07-28"
 
-    def test_with_na_resolution_date(self) -> None:
+    def test_dataset_with_na_resolution_date(self) -> None:
         q = _make_resolved("q1", "acled", 1)
         q2 = ResolvedQuestion(
             id="q1", source="acled", question="Q", outcome=1,
             resolution_date="N/A", forecast_due_date="2024-01-01",
         )
-        assert _scoring_key(q) == "q1"
-        assert _scoring_key(q2) == "q1"
+        assert _scoring_key(q) == "2024-01-01_acled_q1"
+        assert _scoring_key(q2) == "2024-01-01_acled_q1"
 
-    def test_with_none_resolution_date(self) -> None:
+    def test_dataset_with_none_resolution_date(self) -> None:
         q = _make_resolved("q1", "acled", 1)
         assert q.resolution_date is None
-        assert _scoring_key(q) == "q1"
+        assert _scoring_key(q) == "2024-01-01_acled_q1"
+
+    def test_market_excludes_resolution_date(self) -> None:
+        q = _make_resolved_horizon("q1", "metaculus", 1, "2024-07-28")
+        assert _scoring_key(q) == "2024-01-01_metaculus_q1"
+
+    def test_includes_forecast_due_date_and_source(self) -> None:
+        q = _make_resolved_horizon("q1", "acled", 1, "2024-07-28", due="2024-06-01")
+        key = _scoring_key(q)
+        assert "2024-06-01" in key
+        assert "acled" in key
+        assert "q1" in key
+
+    def test_cross_round_distinction(self) -> None:
+        """Same question in two different rounds produces two different scoring keys."""
+        q_round1 = _make_resolved_horizon("q1", "acled", 1, "2024-07-28", due="2024-06-01")
+        q_round2 = _make_resolved_horizon("q1", "acled", 1, "2024-07-28", due="2024-07-01")
+        assert _scoring_key(q_round1) != _scoring_key(q_round2)
 
 
 class TestMultiHorizonScoring:
@@ -387,9 +410,9 @@ class TestMultiHorizonDifficultyAdjustment:
 
         result = adjust_for_difficulty(remapped_pool, resolved)
         effects = result.question_effects
-        assert "q1_2024-07-28" in effects
-        assert "q1_2024-08-20" in effects
-        assert effects["q1_2024-07-28"] != effects["q1_2024-08-20"]
+        assert "2024-01-01_acled_q1_2024-07-28" in effects
+        assert "2024-01-01_acled_q1_2024-08-20" in effects
+        assert effects["2024-01-01_acled_q1_2024-07-28"] != effects["2024-01-01_acled_q1_2024-08-20"]
 
     def test_adjusted_scoring_with_multi_horizon(self) -> None:
         resolved = [
