@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +13,10 @@ from pydantic import BaseModel, field_validator
 
 from forecastbench_parity.constants import (
     API_BASE,
+    FORECAST_HORIZONS_IN_DAYS,
     LEADERBOARD_BASE,
     LEADERBOARD_NAMES,
+    MARKET_SOURCES,
     RAW_BASE,
 )
 
@@ -250,8 +253,19 @@ def join_resolved_questions(
     skipped_invalid_date = 0
     skipped_no_outcome = 0
     skipped_unresolved = 0
+    skipped_horizon = 0
     for qs in question_sets:
+        valid_horizon_dates: set[str] = set()
+        if qs.forecast_due_date:
+            try:
+                due = date.fromisoformat(qs.forecast_due_date)
+                for h in FORECAST_HORIZONS_IN_DAYS:
+                    valid_horizon_dates.add((due + timedelta(days=h)).strftime("%Y-%m-%d"))
+            except ValueError:
+                pass
+
         for q in qs.questions:
+            is_market = any(s in q.source.lower() for s in MARKET_SOURCES)
             for r in resolutions.get(q.id, []):
                 total_seen += 1
                 if isinstance(q.resolution_dates, list):
@@ -261,6 +275,9 @@ def join_resolved_questions(
                     if r.resolution_date not in q.resolution_dates:
                         skipped_invalid_date += 1
                         continue
+                if not is_market and valid_horizon_dates and r.resolution_date not in valid_horizon_dates:
+                    skipped_horizon += 1
+                    continue
                 if r.outcome is None:
                     skipped_no_outcome += 1
                     continue
@@ -292,10 +309,12 @@ def join_resolved_questions(
                 )
     _logger.debug(
         "join_resolved_questions: total_resolutions_seen=%d skipped_null_date=%d "
-        "skipped_invalid_date=%d skipped_no_outcome=%d skipped_unresolved=%d kept_count=%d",
+        "skipped_invalid_date=%d skipped_horizon=%d skipped_no_outcome=%d "
+        "skipped_unresolved=%d kept_count=%d",
         total_seen,
         skipped_null_date,
         skipped_invalid_date,
+        skipped_horizon,
         skipped_no_outcome,
         skipped_unresolved,
         len(resolved),
