@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +13,10 @@ from pydantic import BaseModel, field_validator
 
 from forecastbench_parity.constants import (
     API_BASE,
+    FORECAST_HORIZONS_IN_DAYS,
     LEADERBOARD_BASE,
     LEADERBOARD_NAMES,
+    MARKET_SOURCES,
     RAW_BASE,
 )
 
@@ -209,18 +212,29 @@ def fetch_all_resolutions() -> dict[str, list[Resolution]]:
 
     Each question id maps to a list of Resolution entries so that
     multi-horizon questions (which appear once per resolution_date)
-    are all preserved.
+    are all preserved.  Duplicate (id, resolution_date) pairs across
+    resolution files are dropped to match upstream's pre-deduplicated
+    resolution data.
     """
     filenames = list_resolution_files()
     resolutions: dict[str, list[Resolution]] = {}
+    seen: set[tuple[str, str | None]] = set()
+    duplicates_dropped = 0
     for f in filenames:
         try:
             res_list = fetch_resolution(f)
             for r in res_list:
+                key = (r.id, r.resolution_date)
+                if key in seen:
+                    duplicates_dropped += 1
+                    continue
+                seen.add(key)
                 resolutions.setdefault(r.id, []).append(r)
         except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError) as e:
             _logger.warning("Failed to fetch %s: %s", f, e)
             continue
+    if duplicates_dropped:
+        _logger.info("fetch_all_resolutions: dropped_duplicate_resolutions=%d", duplicates_dropped)
     return resolutions
 
 
@@ -239,8 +253,19 @@ def join_resolved_questions(
     skipped_invalid_date = 0
     skipped_no_outcome = 0
     skipped_unresolved = 0
+    skipped_horizon = 0
     for qs in question_sets:
+        valid_horizon_dates: set[str] = set()
+        if qs.forecast_due_date:
+            try:
+                due = date.fromisoformat(qs.forecast_due_date)
+                for h in FORECAST_HORIZONS_IN_DAYS:
+                    valid_horizon_dates.add((due + timedelta(days=h)).strftime("%Y-%m-%d"))
+            except ValueError:
+                pass
+
         for q in qs.questions:
+            is_market = any(s in q.source.lower() for s in MARKET_SOURCES)
             for r in resolutions.get(q.id, []):
                 total_seen += 1
                 if isinstance(q.resolution_dates, list):
@@ -250,6 +275,9 @@ def join_resolved_questions(
                     if r.resolution_date not in q.resolution_dates:
                         skipped_invalid_date += 1
                         continue
+                if not is_market and valid_horizon_dates and r.resolution_date not in valid_horizon_dates:
+                    skipped_horizon += 1
+                    continue
                 if r.outcome is None:
                     skipped_no_outcome += 1
                     continue
@@ -281,15 +309,41 @@ def join_resolved_questions(
                 )
     _logger.debug(
         "join_resolved_questions: total_resolutions_seen=%d skipped_null_date=%d "
-        "skipped_invalid_date=%d skipped_no_outcome=%d skipped_unresolved=%d kept_count=%d",
+        "skipped_invalid_date=%d skipped_horizon=%d skipped_no_outcome=%d "
+        "skipped_unresolved=%d kept_count=%d",
         total_seen,
         skipped_null_date,
         skipped_invalid_date,
+        skipped_horizon,
         skipped_no_outcome,
         skipped_unresolved,
         len(resolved),
     )
     return resolved
+
+
+def filter_question_sets_by_age(
+    question_sets: list[QuestionSet],
+    max_age_days: int = 365,
+    *,
+    reference_date: date | None = None,
+) -> list[QuestionSet]:
+    """Filter question sets to those with forecast_due_date <= reference_date - max_age_days.
+
+    Matches upstream's MODEL_RELEASE_DAYS_CUTOFF filter which only includes
+    question sets old enough for resolution data to have matured.
+    """
+    if reference_date is None:
+        from datetime import UTC, datetime
+        reference_date = datetime.now(tz=UTC).date()
+    ref = reference_date
+    cutoff = (ref - timedelta(days=max_age_days)).isoformat()
+    kept = [qs for qs in question_sets if qs.forecast_due_date and qs.forecast_due_date <= cutoff]
+    _logger.debug(
+        "filter_question_sets_by_age: total=%d kept=%d cutoff=%s",
+        len(question_sets), len(kept), cutoff,
+    )
+    return kept
 
 
 def fetch_leaderboard(name: str = "baseline") -> list[dict[str, str]]:

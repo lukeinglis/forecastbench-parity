@@ -162,10 +162,16 @@ def murphy_decomposition(
 
 
 def _scoring_key(q: ResolvedQuestion) -> str:
-    """Per-horizon scoring key mirroring upstream's (question_id, resolution_date) entity."""
+    """Per-round scoring key mirroring upstream's question_pk.
+
+    Dataset (multi-horizon): forecast_due_date + source + id + resolution_date
+    Market (single-horizon): forecast_due_date + source + id
+    """
+    if _is_market_question(q):
+        return f"{q.forecast_due_date}_{q.source}_{q.id}"
     if q.resolution_date and q.resolution_date != "N/A":
-        return f"{q.id}_{q.resolution_date}"
-    return q.id
+        return f"{q.forecast_due_date}_{q.source}_{q.id}_{q.resolution_date}"
+    return f"{q.forecast_due_date}_{q.source}_{q.id}"
 
 
 def _is_market_question(q: ResolvedQuestion) -> bool:
@@ -328,6 +334,7 @@ def score_forecasts(
         raise ValueError("No resolved questions to score")
 
     seen_keys: set[str] = set()
+    unique_resolved: list[ResolvedQuestion] = []
     n_missing = 0
     complete_forecasts: dict[str, float] = {}
     for q in resolved:
@@ -335,6 +342,7 @@ def score_forecasts(
         if sk in seen_keys:
             continue
         seen_keys.add(sk)
+        unique_resolved.append(q)
         if q.id in forecasts:
             complete_forecasts[sk] = forecasts[q.id]
         else:
@@ -343,13 +351,13 @@ def score_forecasts(
 
     for f in complete_forecasts.values():
         _validate_forecast(f)
-    for q in resolved:
+    for q in unique_resolved:
         _validate_outcome(q.outcome)
 
     question_effects: dict[str, float] = {}
 
     if difficulty_adjusted and all_forecasts and len(all_forecasts) > 1:
-        scoring_key_to_base_id = {_scoring_key(q): q.id for q in resolved}
+        scoring_key_to_base_id = {_scoring_key(q): q.id for q in unique_resolved}
         remapped_pool: dict[str, dict[str, float]] = {}
         for fid, fcast_map in all_forecasts.items():
             remapped: dict[str, float] = {}
@@ -369,7 +377,7 @@ def score_forecasts(
         pool = dict(remapped_pool)
         pool[forecaster_id] = complete_forecasts
         adj_result = adjust_for_difficulty(
-            pool, resolved,
+            pool, unique_resolved,
             market_weight=market_weight,
             market_forecasts=remapped_market,
         )
@@ -378,7 +386,7 @@ def score_forecasts(
 
         dataset_scores: list[float] = []
         market_scores: list[float] = []
-        for q in resolved:
+        for q in unique_resolved:
             sk = _scoring_key(q)
             adj = target_adjusted.get(sk)
             if adj is None:
@@ -394,7 +402,7 @@ def score_forecasts(
         dataset_pairs: list[tuple[float, int]] = []
         market_pairs: list[tuple[float, int]] = []
 
-        for q in resolved:
+        for q in unique_resolved:
             sk = _scoring_key(q)
             f = complete_forecasts.get(sk, 0.5)
             if _is_market_question(q):
@@ -405,8 +413,8 @@ def score_forecasts(
         ds_brier = mean_brier_score(dataset_pairs) if dataset_pairs else 0.0
         mk_brier = mean_brier_score(market_pairs) if market_pairs else 0.0
 
-    n_dataset = len([q for q in resolved if not _is_market_question(q)])
-    n_market = len([q for q in resolved if _is_market_question(q)])
+    n_dataset = len([q for q in unique_resolved if not _is_market_question(q)])
+    n_market = len([q for q in unique_resolved if _is_market_question(q)])
 
     ds_index = brier_index(ds_brier) if n_dataset > 0 else 0.0
     mk_index = brier_index(mk_brier) if n_market > 0 else 0.0
