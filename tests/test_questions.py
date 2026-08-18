@@ -529,6 +529,133 @@ class TestFilterQuestionSetsByAge:
         assert "2026-06-01" in dates
 
 
+class TestMarketDateExpansion:
+    """Tests that market questions get all round dates while dataset questions keep their own."""
+
+    def test_market_questions_get_all_round_dates(self) -> None:
+        qs = QuestionSet(
+            forecast_due_date="2024-06-01",
+            question_set="round_1",
+            questions=[
+                Question(
+                    id="m1", source="metaculus", question="Market Q1",
+                    resolution_dates=["2024-07-28"],
+                ),
+                Question(
+                    id="d1", source="acled", question="Dataset Q1",
+                    resolution_dates=["2024-07-28", "2024-08-20", "2024-09-15"],
+                ),
+            ],
+        )
+        resolutions: dict[str, list[Resolution]] = {
+            "m1": [
+                Resolution(id="m1", outcome=1, resolution_date="2024-07-28", resolved=True),
+                Resolution(id="m1", outcome=0, resolution_date="2024-08-20", resolved=True),
+                Resolution(id="m1", outcome=1, resolution_date="2024-09-15", resolved=True),
+            ],
+            "d1": [
+                Resolution(id="d1", outcome=1, resolution_date="2024-07-28", resolved=True),
+                Resolution(id="d1", outcome=0, resolution_date="2024-08-20", resolved=True),
+                Resolution(id="d1", outcome=1, resolution_date="2024-09-15", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        market_results = [r for r in result if r.source == "metaculus"]
+        assert len(market_results) == 3
+        market_dates = {r.resolution_date for r in market_results}
+        assert market_dates == {"2024-07-28", "2024-08-20", "2024-09-15"}
+
+    def test_dataset_questions_keep_own_resolution_dates(self) -> None:
+        qs = QuestionSet(
+            forecast_due_date="2024-06-01",
+            question_set="round_1",
+            questions=[
+                Question(
+                    id="m1", source="polymarket", question="Market Q1",
+                    resolution_dates=["2024-06-08", "2024-08-20", "2024-09-15"],
+                ),
+                Question(
+                    id="d1", source="acled", question="Dataset Q1",
+                    resolution_dates=["2024-06-08"],
+                ),
+            ],
+        )
+        resolutions: dict[str, list[Resolution]] = {
+            "m1": [
+                Resolution(id="m1", outcome=1, resolution_date="2024-06-08", resolved=True),
+            ],
+            "d1": [
+                Resolution(id="d1", outcome=1, resolution_date="2024-06-08", resolved=True),
+                Resolution(id="d1", outcome=0, resolution_date="2024-08-20", resolved=True),
+                Resolution(id="d1", outcome=1, resolution_date="2024-09-15", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs], resolutions)
+        dataset_results = [r for r in result if r.source == "acled"]
+        assert len(dataset_results) == 1
+        assert dataset_results[0].resolution_date == "2024-06-08"
+
+    def test_market_expansion_per_round_not_cross_round(self) -> None:
+        qs1 = QuestionSet(
+            forecast_due_date="2024-06-01",
+            question_set="round_1",
+            questions=[
+                Question(
+                    id="m1", source="metaculus", question="Market Q1",
+                    resolution_dates=["2024-07-28"],
+                ),
+                Question(
+                    id="d1", source="acled", question="Dataset Q1",
+                    resolution_dates=["2024-07-28", "2024-08-20"],
+                ),
+            ],
+        )
+        qs2 = QuestionSet(
+            forecast_due_date="2024-07-01",
+            question_set="round_2",
+            questions=[
+                Question(
+                    id="m2", source="metaculus", question="Market Q2",
+                    resolution_dates=["2024-09-15"],
+                ),
+                Question(
+                    id="d2", source="acled", question="Dataset Q2",
+                    resolution_dates=["2024-09-15", "2024-10-10"],
+                ),
+            ],
+        )
+        resolutions: dict[str, list[Resolution]] = {
+            "m1": [
+                Resolution(id="m1", outcome=1, resolution_date="2024-07-28", resolved=True),
+                Resolution(id="m1", outcome=0, resolution_date="2024-08-20", resolved=True),
+                Resolution(id="m1", outcome=1, resolution_date="2024-09-15", resolved=True),
+            ],
+            "m2": [
+                Resolution(id="m2", outcome=0, resolution_date="2024-09-15", resolved=True),
+                Resolution(id="m2", outcome=1, resolution_date="2024-10-10", resolved=True),
+                Resolution(id="m2", outcome=0, resolution_date="2024-07-28", resolved=True),
+            ],
+            "d1": [
+                Resolution(id="d1", outcome=1, resolution_date="2024-07-28", resolved=True),
+                Resolution(id="d1", outcome=0, resolution_date="2024-08-20", resolved=True),
+            ],
+            "d2": [
+                Resolution(id="d2", outcome=1, resolution_date="2024-09-15", resolved=True),
+                Resolution(id="d2", outcome=0, resolution_date="2024-10-10", resolved=True),
+            ],
+        }
+        result = join_resolved_questions([qs1, qs2], resolutions)
+        m1_results = [r for r in result if r.id == "m1"]
+        m1_dates = {r.resolution_date for r in m1_results}
+        assert m1_dates == {"2024-07-28", "2024-08-20"}
+        assert "2024-09-15" not in m1_dates
+
+        m2_results = [r for r in result if r.id == "m2"]
+        m2_dates = {r.resolution_date for r in m2_results}
+        assert m2_dates == {"2024-09-15", "2024-10-10"}
+        assert "2024-07-28" not in m2_dates
+
+
 class TestRefreshCache:
     def test_deletes_listings_and_resolutions(self, tmp_path: Path) -> None:
         (tmp_path / "question_sets_listing.json").write_text("{}")

@@ -292,9 +292,13 @@ def adjust_for_difficulty(
 
     dataset_half: list[float] = []
     market_half: list[float] = []
+    seen_keys: set[str] = set()
     for q in resolved:
-        bs_half = (0.5 - q.outcome) ** 2
         sk = _scoring_key(q)
+        if sk in seen_keys:
+            continue
+        seen_keys.add(sk)
+        bs_half = (0.5 - q.outcome) ** 2
         effect = all_effects.get(sk, 0.0)
         val = bs_half - effect
         if sk in dataset_qid_set:

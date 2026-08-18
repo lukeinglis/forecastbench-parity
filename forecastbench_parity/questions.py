@@ -255,6 +255,11 @@ def join_resolved_questions(
     skipped_unresolved = 0
     skipped_horizon = 0
     for qs in question_sets:
+        all_round_dates: set[str] = set()
+        for q in qs.questions:
+            if isinstance(q.resolution_dates, list):
+                all_round_dates.update(q.resolution_dates)
+
         valid_horizon_dates: set[str] = set()
         if qs.forecast_due_date:
             try:
@@ -266,13 +271,17 @@ def join_resolved_questions(
 
         for q in qs.questions:
             is_market = any(s in q.source.lower() for s in MARKET_SOURCES)
+            effective_dates = q.resolution_dates
+            if isinstance(q.resolution_dates, list) and is_market:
+                effective_dates = sorted(all_round_dates)
+
             for r in resolutions.get(q.id, []):
                 total_seen += 1
-                if isinstance(q.resolution_dates, list):
+                if isinstance(effective_dates, list):
                     if r.resolution_date is None or r.resolution_date == "N/A":
                         skipped_null_date += 1
                         continue
-                    if r.resolution_date not in q.resolution_dates:
+                    if r.resolution_date not in effective_dates:
                         skipped_invalid_date += 1
                         continue
                 if not is_market and valid_horizon_dates and r.resolution_date not in valid_horizon_dates:

@@ -273,6 +273,30 @@ class TestDifficultyNoClamp:
         assert has_out_of_unit or all_in_unit
 
 
+class TestAdjustForDifficultyDedup:
+    def test_duplicate_scoring_keys_not_inflated(self) -> None:
+        resolved = [
+            _make_resolved_horizon("m1", "metaculus", 1, "2024-07-28"),
+            _make_resolved_horizon("m1", "metaculus", 1, "2024-07-28"),
+            _make_resolved_horizon("m1", "metaculus", 1, "2024-07-28"),
+            _make_resolved_horizon("d1", "acled", 0, "2024-07-28"),
+        ]
+        sk_m1 = _scoring_key(resolved[0])
+        sk_d1 = _scoring_key(resolved[3])
+        forecasts = {
+            "A": {sk_m1: 0.5, sk_d1: 0.5},
+            "B": {sk_m1: 0.9, sk_d1: 0.1},
+        }
+        result = adjust_for_difficulty(forecasts, resolved)
+        half_scores = result.adjusted_scores["A"]
+        market_vals = [v for k, v in half_scores.items() if "metaculus" in k]
+        dataset_vals = [v for k, v in half_scores.items() if "acled" in k]
+        assert len(market_vals) == 1
+        assert len(dataset_vals) == 1
+        assert abs(market_vals[0] - 0.25) < 1e-10
+        assert abs(dataset_vals[0] - 0.25) < 1e-10
+
+
 class TestPerColumnShifts:
     def test_per_column_shifts(self) -> None:
         qs = [
