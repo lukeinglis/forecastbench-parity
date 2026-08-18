@@ -12,6 +12,8 @@ FORECAST_RANGE: tuple[float, float] = (0.0, 1.0)
 
 MAX_SUBMISSIONS_PER_ROUND: int = 3
 
+FORECAST_HORIZONS_IN_DAYS: tuple[int, ...] = (7, 30, 90, 180, 365, 1095, 1825, 3650)
+
 REPO_OWNER: str = "forecastingresearch"
 REPO_NAME: str = "forecastbench-datasets"
 RAW_BASE: str = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/datasets"
