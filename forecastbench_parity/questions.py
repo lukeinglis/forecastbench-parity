@@ -14,6 +14,7 @@ from forecastbench_parity.constants import (
     API_BASE,
     LEADERBOARD_BASE,
     LEADERBOARD_NAMES,
+    MARKET_SOURCES,
     RAW_BASE,
 )
 
@@ -240,14 +241,25 @@ def join_resolved_questions(
     skipped_no_outcome = 0
     skipped_unresolved = 0
     for qs in question_sets:
+        all_round_dates: set[str] = set()
         for q in qs.questions:
+            if isinstance(q.resolution_dates, list):
+                all_round_dates.update(q.resolution_dates)
+
+        for q in qs.questions:
+            effective_dates = q.resolution_dates
+            if isinstance(q.resolution_dates, list):
+                source_lower = q.source.lower()
+                if any(s in source_lower for s in MARKET_SOURCES):
+                    effective_dates = sorted(all_round_dates)
+
             for r in resolutions.get(q.id, []):
                 total_seen += 1
-                if isinstance(q.resolution_dates, list):
+                if isinstance(effective_dates, list):
                     if r.resolution_date is None or r.resolution_date == "N/A":
                         skipped_null_date += 1
                         continue
-                    if r.resolution_date not in q.resolution_dates:
+                    if r.resolution_date not in effective_dates:
                         skipped_invalid_date += 1
                         continue
                 if r.outcome is None:
